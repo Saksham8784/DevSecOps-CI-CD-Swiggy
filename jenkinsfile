@@ -1,0 +1,78 @@
+pipeline {
+    agent any
+
+    tools {
+        jdk 'jdk'
+        nodejs 'node25'
+    }
+
+    environment {
+        SONAR_HOME = tool "Sonar"
+    }
+
+    stages {
+
+        stage('Code') {
+            steps {
+                echo "cloning code from github"
+                git url: 'https://github.com/KastroVKiran/DevOps-Project-Swiggy', branch: 'master'
+            }
+        }
+
+        stage("SonarQube Quality Analysis") {
+            steps {
+                withSonarQubeEnv("Sonar") {
+                    sh "$SONAR_HOME/bin/sonar-scanner -Dsonar.projectName=Swiggy -Dsonar.projectKey=Swiggy"
+                }
+            }
+        }
+
+        stage("Sonar Quality Gate Scan") {
+            steps {
+                timeout(time: 2, unit: "MINUTES") {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh "npm install"
+            }
+        }
+
+        stage('OWASP FS SCAN') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
+                                odcInstallation: 'owasp'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+
+        stage("Trivy File System Scan") {
+            steps {
+                sh "trivy fs . --format table -o trivy-fs-report.html"
+            }
+        }
+        
+         stage('Build') {
+            steps {
+                echo 'This is building'
+                sh "/usr/local/bin/docker build -t swiggy ."
+                echo "build successful"
+            }
+        }
+  
+        stage("TRIVY Image Scan") {
+            steps {
+                sh "trivy image swiggy:latest > trivy.txt"
+            }
+        }
+
+        stage('Deploy to container') {
+            steps {
+                sh 'docker run -d --name swiggy -p 3000:3000 swiggy:latest'
+            }
+        }
+    }
+}
